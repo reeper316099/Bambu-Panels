@@ -42,7 +42,21 @@ client.on("error", (e) => {
 });
 
 client.on("message", (topic, payload) => {
-  // Print only the topic + a short preview so it doesn’t spam your terminal to death
-  const preview = payload.toString().slice(0, 120).replace(/\s+/g, " ");
-  console.log(topic, "=>", preview);
+  let msg;
+  try { msg = JSON.parse(payload.toString()); } catch { return; }
+
+  if (topic.includes("/request") && msg?.system?.command === "ledctrl") {
+    console.log("\n➡️ LEDCTRL REQUEST:", topic);
+    console.log(JSON.stringify(msg, null, 2));
+  }
+
+  if (topic.includes("/report") && msg?.system) {
+    console.log("\n🧠 SYSTEM REPORT:", topic);
+    console.log(JSON.stringify(msg.system, null, 2));
+  }
+
+  if (topic.includes("/report") && msg?.print?.lights_report) {
+    console.log("\n🔦 LIGHTS_REPORT:", topic);
+    console.log(JSON.stringify(msg.print.lights_report, null, 2));
+  }
 });
