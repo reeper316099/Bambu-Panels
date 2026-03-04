@@ -27,16 +27,9 @@ jobs:
   update-release-notes:
     runs-on: ubuntu-latest
     steps:
-      - name: Generate summary + update release body
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.repository_owner }}
-          REPO: ${{ github.event.repository.name }}
-          TAG: ${{ inputs.tag }}
-          PREV: ${{ inputs.previous_tag }}
-          MODE: ${{ inputs.mode }}
+      - name: Write generator script
         run: |
-          python3 - <<'PY'
+          cat > generate_notes.py <<'PY'
           import json, os, re, textwrap, urllib.request, urllib.error
 
           token = os.environ["GH_TOKEN"]
@@ -69,6 +62,9 @@ jobs:
           def clean_subject(s: str) -> str:
               s = s.strip()
               s = re.sub(r"\s+", " ", s)
+              # ignore noisy merge commits
+              if s.lower().startswith("merge "):
+                  return ""
               return s
 
           def bucket(subject: str) -> str:
@@ -82,29 +78,20 @@ jobs:
               return "Changes"
 
           def summarize(subjects):
-              """
-              Lightweight, deterministic summary (no AI calls):
-              - Identify dominant categories
-              - Mention 2-3 key themes
-              """
-              cats = {}
-              for s in subjects:
-                  cats[bucket(s)] = cats.get(bucket(s), 0) + 1
-              top = sorted(cats.items(), key=lambda x: x[1], reverse=True)[:3]
               if not subjects:
                   return "No commits found between these tags."
 
-              themes = []
-              for c, n in top:
-                  themes.append(f"{c.lower()} ({n})")
+              cats = {}
+              for s in subjects:
+                  cats[bucket(s)] = cats.get(bucket(s), 0) + 1
 
-              # Also mention a couple of representative changes
+              top = sorted(cats.items(), key=lambda x: x[1], reverse=True)[:3]
+              themes = [f"{c.lower()} ({n})" for c, n in top]
               examples = subjects[:3]
               ex = "; ".join(examples)
 
               return textwrap.fill(
-                  f"This release focuses on {', '.join(themes)}. "
-                  f"Key changes include: {ex}.",
+                  f"This release focuses on {', '.join(themes)}. Key changes include: {ex}.",
                   width=88
               )
 
@@ -120,7 +107,7 @@ jobs:
           # 2) Fetch commits between PREV...TAG
           _, compare_json = request("GET", f"{api_base}/compare/{prev}...{tag}")
           compare = json.loads(compare_json)
-          commits = compare.get("commits", [])
+          commits = compare.get("commits", []) or []
 
           subjects = []
           for c in commits:
@@ -134,21 +121,20 @@ jobs:
           for s in subjects:
               grouped.setdefault(bucket(s), []).append(s)
 
-          order = ["Build/Release", "Added", "Fixes", "Changed", "Refactors", "Docs", "Removed", "Changes"]
+          order = ["Build/Release", "Added", "Fixes", "Changes", "Refactors", "Docs", "Removed"]
           def sort_key(k): return order.index(k) if k in order else 999
+
           sections = []
           for k in sorted(grouped.keys(), key=sort_key):
               items = "\n".join([f"- {x}" for x in grouped[k]])
               sections.append(f"### {k}\n{items}")
 
           changes_block = "\n\n".join(sections) if sections else "_No commit messages found in this range._"
-
           compare_link = f"https://github.com/{owner}/{repo}/compare/{prev}...{tag}"
 
-          # 4) Create a nice header + summary + changes
-          header = f"""
-          # Bambu-Panels {tag}
-          
+          # 4) Compose release body (no markdown code fences to avoid parsing weirdness)
+          body = f"""# Bambu-Panels {tag}
+
           ## Downloads
           - macOS Apple Silicon: bambu-panels-{tag}-macos-arm64.pkg
           - macOS Intel: bambu-panels-{tag}-macos-amd64.pkg
@@ -162,7 +148,6 @@ jobs:
           3. Run start.sh
           
           Linux
-          
           tar -xzf bambu-panels-{tag}-linux-amd64.tar.gz
           cd bambu-panels
           ./start.sh
@@ -176,3 +161,28 @@ jobs:
           ## Full Changelog
           {compare_link}
           """
+
+          new_body = body.strip() + "\n"
+
+          if mode == "append" and current_body.strip():
+              final_body = current_body + "\n\n---\n\n" + new_body
+          else:
+              final_body = new_body
+
+          # 5) Patch the release body
+          request("PATCH", f"{api_base}/releases/{release_id}", {"body": final_body})
+
+          print(f"Updated release notes for tag={tag} from prev={prev} (mode={mode}).")
+          print(f"Body length: {len(final_body)} chars")
+          PY
+
+      - name: Run generator
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          TAG: ${{ inputs.tag }}
+          PREV: ${{ inputs.previous_tag }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          python3 generate_notes.py
