@@ -36,72 +36,63 @@ jobs:
           PREV: ${{ inputs.previous_tag }}
           MODE: ${{ inputs.mode }}
         run: |
-          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
 
-          api() {
-            curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-                 -H "Accept: application/vnd.github+json" \
-                 "$@"
-          }
+          token = os.environ["GH_TOKEN"]
+          owner = os.environ["OWNER"]
+          repo = os.environ["REPO"]
+          tag = os.environ["TAG"]
+          prev = os.environ.get("PREV", "").strip()
+          mode = os.environ.get("MODE", "overwrite").strip()
 
-          echo "Updating release notes for $OWNER/$REPO tag=$TAG mode=$MODE"
+          api_base = f"https://api.github.com/repos/{owner}/{repo}"
 
-          RELEASE_JSON="$(api "https://api.github.com/repos/$OWNER/$REPO/releases/tags/$TAG")"
-          RELEASE_ID="$(echo "$RELEASE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")"
-          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "None" ]; then
-            echo "ERROR: No release exists for tag '$TAG'. Create the release first." >&2
-            exit 1
-          fi
+          def request(method, url, payload=None):
+            headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "release-notes-bot"
+            }
+            data = None
+            if payload is not None:
+              data = json.dumps(payload).encode("utf-8")
+              headers["Content-Type"] = "application/json"
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            try:
+              with urllib.request.urlopen(req) as resp:
+                body = resp.read().decode("utf-8")
+                return resp.status, body
+            except urllib.error.HTTPError as e:
+              err_body = e.read().decode("utf-8", errors="replace")
+              raise RuntimeError(f"{method} {url} failed: HTTP {e.code}\n{err_body}")
 
-          if [ -n "${PREV:-}" ]; then
-            GEN_PAYLOAD="$(python3 - <<PY
-import json, os
-print(json.dumps({"tag_name": os.environ["TAG"], "previous_tag_name": os.environ["PREV"]}))
-PY
-)"
-          else
-            GEN_PAYLOAD="$(python3 - <<PY
-import json, os
-print(json.dumps({"tag_name": os.environ["TAG"]}))
-PY
-)"
-          fi
+          # 1) Get release by tag
+          _, release_body = request("GET", f"{api_base}/releases/tags/{tag}")
+          release = json.loads(release_body)
+          release_id = release.get("id")
+          if not release_id:
+            raise RuntimeError(f"No release exists for tag '{tag}'. Create the release first, then rerun this workflow.")
+          current_body = release.get("body") or ""
 
-          NOTES_JSON="$(curl -sS -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$OWNER/$REPO/releases/generate-notes" \
-            -d "$GEN_PAYLOAD")"
+          # 2) Generate notes
+          gen_payload = {"tag_name": tag}
+          if prev:
+            gen_payload["previous_tag_name"] = prev
 
-          NOTES_BODY="$(echo "$NOTES_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))")"
-          if [ -z "$NOTES_BODY" ] || [ "$NOTES_BODY" = "None" ]; then
-            echo "ERROR: GitHub did not return generated notes. Response:" >&2
-            echo "$NOTES_JSON" >&2
-            exit 1
-          fi
+          _, notes_body = request("POST", f"{api_base}/releases/generate-notes", gen_payload)
+          notes = json.loads(notes_body)
+          generated = notes.get("body")
+          if not generated:
+            raise RuntimeError(f"GitHub did not return generated notes.\n{notes_body}")
 
-          CURRENT_BODY="$(echo "$RELEASE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body','') or '')")"
+          # 3) Merge into release body
+          if mode == "append" and current_body.strip():
+            new_body = current_body.rstrip() + "\n\n---\n\n" + generated.lstrip()
+          else:
+            new_body = generated
 
-          if [ "$MODE" = "append" ] && [ -n "$CURRENT_BODY" ]; then
-            NEW_BODY="$CURRENT_BODY"$'\n\n---\n\n'"$NOTES_BODY"
-          else
-            NEW_BODY="$NOTES_BODY"
-          fi
-
-          PATCH_PAYLOAD="$(python3 - <<PY
-import json, os, sys
-print(json.dumps({"body": os.environ["BODY"]}))
-PY
-)"
-          # Put body into env so JSON quoting is correct
-          BODY="$NEW_BODY" curl -sS -X PATCH \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID" \
-            -d "$(python3 - <<PY
-import json, os
-print(json.dumps({"body": os.environ["BODY"]}))
-PY
-)" >/dev/null
-
-          echo "Done. Release body updated for tag=$TAG"
+          # 4) Patch the release
+          request("PATCH", f"{api_base}/releases/{release_id}", {"body": new_body})
+          print(f"Updated release notes for tag={tag} (mode={mode}).")
+          PY
