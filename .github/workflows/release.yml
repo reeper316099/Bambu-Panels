@@ -1,0 +1,81 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Optional: only if you actually have a package.json
+      - name: Install dependencies
+        if: ${{ hashFiles('package-lock.json') != '' || hashFiles('npm-shrinkwrap.json') != '' }}
+        run: npm ci
+
+      # Optional: only if you have tests
+      - name: Run tests
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm test --if-present
+
+      # Create clean archives of the repo (excluding .git)
+      - name: Create tar.gz
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          tar --exclude=".git" \
+              --exclude="node_modules" \
+              --exclude=".DS_Store" \
+              -czf "dist/bambu-panels-${VERSION}.tar.gz" .
+
+      - name: Create zip
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          (cd . && zip -r "dist/bambu-panels-${VERSION}.zip" . \
+            -x ".git/*" "node_modules/*" ".DS_Store")
+
+      - name: Create GitHub Release + upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/bambu-panels-*.tar.gz
+            dist/bambu-panels-*.zip
+  build-pkg-macos:
+    runs-on: macos-latest
+    needs: build-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build .pkg
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p pkgroot/Applications/Bambu-Panels
+          rsync -a . pkgroot/Applications/Bambu-Panels/ \
+            --exclude ".git" --exclude "node_modules" --exclude ".DS_Store" --exclude "pkgroot" --exclude "dist"
+
+          pkgbuild \
+            --root pkgroot \
+            --identifier com.yourname.bambu-panels \
+            --version "${VERSION#v}" \
+            "bambu-panels-${VERSION}.pkg"
+
+      - name: Upload .pkg to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bambu-panels-*.pkg
