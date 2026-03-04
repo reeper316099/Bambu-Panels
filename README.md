@@ -210,6 +210,16 @@ Create a tag to build a new release.
 
 ---
 
+# Configuration
+
+Create a configuration file from the template:
+
+cp .env.example .env
+
+Then edit it with your printer's information.
+
+---
+
 # Contributing
 
 Contributions are welcome.
