@@ -69,6 +69,24 @@
                 </div>
             </div>
 
+            <div class="card">
+                <h2>Lights</h2>
+
+                <div class="row spread muted">
+                    <div>Chamber: <span id="lightChamberState">—</span></div>
+                    <div>Work: <span id="lightWorkState">—</span></div>
+                </div>
+
+                <div class="row" style="margin-top:10px;">
+                    <button onclick="setLight('chamber_light','on')">Chamber On</button>
+                    <button onclick="setLight('chamber_light','off')">Chamber Off</button>
+                </div>
+
+                <div class="muted" style="margin-top:10px;">
+                    Work light is reported by firmware (often not user-controllable).
+                </div>
+            </div>
+
             <div class="card wide">
                 <h2>Debug</h2>
                 <pre id="job" class="pre">{}</pre>
