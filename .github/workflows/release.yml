@@ -81,14 +81,21 @@ jobs:
       - name: Fetch go2rtc for macOS ${{ matrix.arch }}
         run: |
           mkdir -p bin
-          # Regex may need a one-time tweak depending on go2rtc asset naming.
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            RX="go2rtc.*(mac|darwin).*arm64|go2rtc.*arm64.*(mac|darwin)"
+            RX="go2rtc_mac_arm64\.zip"
           else
-            RX="go2rtc.*(mac|darwin).*(amd64|x86_64)|go2rtc.*(amd64|x86_64).*(mac|darwin)"
+            RX="go2rtc_mac_amd64\.zip"
           fi
-
-          python3 scripts/fetch_go2rtc.py "${GO2RTC_REPO}" "${GO2RTC_TAG}" "${RX}" "bin/go2rtc"
+          python3 scripts/fetch_go2rtc.py "${GO2RTC_REPO}" "${GO2RTC_TAG}" "${RX}" "bin/go2rtc.zip"
+          mkdir -p bin/go2rtc_extracted
+          unzip -o "bin/go2rtc.zip" -d "bin/go2rtc_extracted"
+          GO2RTC_PATH="$(find bin/go2rtc_extracted -type f -name 'go2rtc*' | head -n 1)"
+          if [ -z "$GO2RTC_PATH" ]; then
+            echo "Could not find go2rtc binary in zip" >&2
+            exit 1
+          fi
+          cp "$GO2RTC_PATH" "bin/go2rtc"
+          chmod +x "bin/go2rtc"
 
       - name: Build .pkg
         run: |
@@ -135,8 +142,9 @@ jobs:
       - name: Fetch go2rtc for Linux ${{ matrix.arch }}
         run: |
           mkdir -p bin
-          RX="go2rtc.*linux.*(amd64|x86_64)|go2rtc.*(amd64|x86_64).*linux"
+          RX="go2rtc_linux_amd64$"
           python3 scripts/fetch_go2rtc.py "${GO2RTC_REPO}" "${GO2RTC_TAG}" "${RX}" "bin/go2rtc"
+          chmod +x bin/go2rtc
 
       - name: Package Linux bundle
         run: |
@@ -155,67 +163,9 @@ jobs:
           cp bin/go2rtc bundle/bin/go2rtc
           chmod +x bundle/bin/go2rtc
 
-          tar -czf "dist/bambu-panels-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C bundle .
+          tar -czf "dist/bambu-panels-${VERSION}-linux-amd64.tar.gz" -C bundle .
 
       - name: Upload Linux bundle
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/bambu-panels-*-linux-*.tar.gz
-
-  windows-bundle:
-    name: Windows zip (amd64) with go2rtc
-    runs-on: windows-latest
-    needs: create-release-and-sources
-    strategy:
-      matrix:
-        arch: [amd64]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Fetch go2rtc for Windows amd64 (win64.zip)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path bin | Out-Null
-
-          # go2rtc uses win64.zip naming
-          $rx = "go2rtc_win64\.zip"
-          python scripts/fetch_go2rtc.py $env:GO2RTC_REPO $env:GO2RTC_TAG $rx "bin\go2rtc_win64.zip"
-
-          # Extract zip and locate the exe
-          Expand-Archive -Path "bin\go2rtc_win64.zip" -DestinationPath "bin\go2rtc_extracted" -Force
-
-          $exe = Get-ChildItem -Path "bin\go2rtc_extracted" -Recurse -Filter "*.exe" | Select-Object -First 1
-          if (-not $exe) { throw "Could not find .exe inside go2rtc_win64.zip" }
-
-          Copy-Item $exe.FullName "bin\go2rtc.exe" -Force
-
-      - name: Package Windows bundle
-        shell: pwsh
-        run: |
-          $version = "${env:GITHUB_REF_NAME}"
-
-          Remove-Item -Recurse -Force bundle, dist -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path bundle\bin, dist | Out-Null
-
-          # Copy repo into bundle, excluding junk
-          robocopy . bundle /E /XD .git node_modules dist pkgroot bundle /XF .DS_Store | Out-Null
-          $rc = $LASTEXITCODE
-
-          # Robocopy exit codes 0-7 are success. 8+ is failure.
-          if ($rc -ge 8) {
-            Write-Error "robocopy failed with exit code $rc"
-            exit $rc
-          } else {
-            Write-Host "robocopy succeeded with exit code $rc (treated as success)"
-          }
-
-          Copy-Item bin\go2rtc.exe bundle\bin\go2rtc.exe -Force
-
-          Compress-Archive -Path bundle\* -DestinationPath "dist\bambu-panels-$version-windows-amd64.zip" -Force
-
-      - name: Upload Windows bundle
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/bambu-panels-*-windows-amd64.zip
+          files: dist/bambu-panels-*-linux-amd64.tar.gz
