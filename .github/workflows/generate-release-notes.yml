@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to update (example: V1.0.9)"
+        description: "Release tag to update (example: V1.2)"
         required: true
         type: string
       previous_tag:
-        description: "Optional: previous tag (example: V1.0.8). Leave blank to let GitHub guess."
-        required: false
+        description: "Previous tag for comparison (example: V1.1.1)"
+        required: true
         type: string
       mode:
-        description: "Overwrite or append notes into the release body"
+        description: "Overwrite or append into the release body"
         required: true
         default: "overwrite"
         type: choice
@@ -27,7 +27,7 @@ jobs:
   update-release-notes:
     runs-on: ubuntu-latest
     steps:
-      - name: Generate notes and update release body
+      - name: Generate summary + update release body
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
@@ -37,62 +37,130 @@ jobs:
           MODE: ${{ inputs.mode }}
         run: |
           python3 - <<'PY'
-          import json, os, sys, urllib.request, urllib.error
+          import json, os, re, textwrap, urllib.request, urllib.error
 
           token = os.environ["GH_TOKEN"]
           owner = os.environ["OWNER"]
           repo = os.environ["REPO"]
-          tag = os.environ["TAG"]
-          prev = os.environ.get("PREV", "").strip()
+          tag = os.environ["TAG"].strip()
+          prev = os.environ["PREV"].strip()
           mode = os.environ.get("MODE", "overwrite").strip()
 
           api_base = f"https://api.github.com/repos/{owner}/{repo}"
 
           def request(method, url, payload=None):
-            headers = {
-              "Authorization": f"Bearer {token}",
-              "Accept": "application/vnd.github+json",
-              "User-Agent": "release-notes-bot"
-            }
-            data = None
-            if payload is not None:
-              data = json.dumps(payload).encode("utf-8")
-              headers["Content-Type"] = "application/json"
-            req = urllib.request.Request(url, data=data, headers=headers, method=method)
-            try:
-              with urllib.request.urlopen(req) as resp:
-                body = resp.read().decode("utf-8")
-                return resp.status, body
-            except urllib.error.HTTPError as e:
-              err_body = e.read().decode("utf-8", errors="replace")
-              raise RuntimeError(f"{method} {url} failed: HTTP {e.code}\n{err_body}")
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "release-notes-bot",
+              }
+              data = None
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, resp.read().decode("utf-8")
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {url} failed: HTTP {e.code}\n{body}")
 
-          # 1) Get release by tag
-          _, release_body = request("GET", f"{api_base}/releases/tags/{tag}")
-          release = json.loads(release_body)
+          def clean_subject(s: str) -> str:
+              s = s.strip()
+              s = re.sub(r"\s+", " ", s)
+              return s
+
+          def bucket(subject: str) -> str:
+              s = subject.lower()
+              if any(k in s for k in ["fix", "bug", "hotfix", "patch"]): return "Fixes"
+              if any(k in s for k in ["add", "feat", "feature", "implement", "support"]): return "Added"
+              if any(k in s for k in ["remove", "delete", "drop"]): return "Removed"
+              if any(k in s for k in ["doc", "readme", "docs"]): return "Docs"
+              if any(k in s for k in ["refactor", "cleanup", "restructure"]): return "Refactors"
+              if any(k in s for k in ["build", "workflow", "ci", "release", "pkg", "installer"]): return "Build/Release"
+              return "Changes"
+
+          def summarize(subjects):
+              """
+              Lightweight, deterministic summary (no AI calls):
+              - Identify dominant categories
+              - Mention 2-3 key themes
+              """
+              cats = {}
+              for s in subjects:
+                  cats[bucket(s)] = cats.get(bucket(s), 0) + 1
+              top = sorted(cats.items(), key=lambda x: x[1], reverse=True)[:3]
+              if not subjects:
+                  return "No commits found between these tags."
+
+              themes = []
+              for c, n in top:
+                  themes.append(f"{c.lower()} ({n})")
+
+              # Also mention a couple of representative changes
+              examples = subjects[:3]
+              ex = "; ".join(examples)
+
+              return textwrap.fill(
+                  f"This release focuses on {', '.join(themes)}. "
+                  f"Key changes include: {ex}.",
+                  width=88
+              )
+
+          # 1) Find the release for TAG
+          _, release_json = request("GET", f"{api_base}/releases/tags/{tag}")
+          release = json.loads(release_json)
           release_id = release.get("id")
           if not release_id:
-            raise RuntimeError(f"No release exists for tag '{tag}'. Create the release first, then rerun this workflow.")
-          current_body = release.get("body") or ""
+              raise RuntimeError(f"No release exists for tag '{tag}'. Create the release first, then rerun.")
 
-          # 2) Generate notes
-          gen_payload = {"tag_name": tag}
-          if prev:
-            gen_payload["previous_tag_name"] = prev
+          current_body = (release.get("body") or "").rstrip()
 
-          _, notes_body = request("POST", f"{api_base}/releases/generate-notes", gen_payload)
-          notes = json.loads(notes_body)
-          generated = notes.get("body")
-          if not generated:
-            raise RuntimeError(f"GitHub did not return generated notes.\n{notes_body}")
+          # 2) Fetch commits between PREV...TAG
+          _, compare_json = request("GET", f"{api_base}/compare/{prev}...{tag}")
+          compare = json.loads(compare_json)
+          commits = compare.get("commits", [])
 
-          # 3) Merge into release body
-          if mode == "append" and current_body.strip():
-            new_body = current_body.rstrip() + "\n\n---\n\n" + generated.lstrip()
-          else:
-            new_body = generated
+          subjects = []
+          for c in commits:
+              msg = (c.get("commit", {}).get("message") or "")
+              subject = clean_subject(msg.split("\n", 1)[0])
+              if subject:
+                  subjects.append(subject)
 
-          # 4) Patch the release
-          request("PATCH", f"{api_base}/releases/{release_id}", {"body": new_body})
-          print(f"Updated release notes for tag={tag} (mode={mode}).")
-          PY
+          # 3) Build categorized bullet lists
+          grouped = {}
+          for s in subjects:
+              grouped.setdefault(bucket(s), []).append(s)
+
+          order = ["Build/Release", "Added", "Fixes", "Changed", "Refactors", "Docs", "Removed", "Changes"]
+          def sort_key(k): return order.index(k) if k in order else 999
+          sections = []
+          for k in sorted(grouped.keys(), key=sort_key):
+              items = "\n".join([f"- {x}" for x in grouped[k]])
+              sections.append(f"### {k}\n{items}")
+
+          changes_block = "\n\n".join(sections) if sections else "_No commit messages found in this range._"
+
+          compare_link = f"https://github.com/{owner}/{repo}/compare/{prev}...{tag}"
+
+          # 4) Create a nice header + summary + changes
+          header = f"""# Bambu-Panels {tag}
+
+          ## Downloads
+          - macOS Apple Silicon: `bambu-panels-{tag}-macos-arm64.pkg`
+          - macOS Intel: `bambu-panels-{tag}-macos-amd64.pkg`
+          - Linux: `bambu-panels-{tag}-linux-amd64.tar.gz`
+          
+          ## Quick Start
+          ### macOS
+          1. Install the `.pkg`
+          2. Files install to `/Applications/Bambu-Panels`
+          3. Run `start.sh`
+          
+          ### Linux
+          ```bash
+          tar -xzf bambu-panels-{tag}-linux-amd64.tar.gz
+          cd bambu-panels
+          ./start.sh
