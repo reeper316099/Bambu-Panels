@@ -87,6 +87,26 @@
                 </div>
             </div>
 
+            <div class="card">
+                <h2>Morse (Chamber Light)</h2>
+                <div class="muted">Status: <span id="morseStatus">Idle</span></div>
+
+                <div class="row" style="margin-top:10px;">
+                    <input id="morseText" placeholder="SOS TEST 123" style="flex:1;" />
+                </div>
+
+                <div class="row" style="margin-top:10px; align-items:center;">
+                    <label class="muted">Unit (ms)</label>
+                    <input id="morseUnit" type="number" value="120" min="40" max="1000" style="width:100px;" />
+                    <button onclick="morseStart()">Send</button>
+                    <button class="danger" onclick="morseStop()">Stop</button>
+                </div>
+
+                <div class="muted" style="margin-top:10px;">
+                    Dot=1 unit, Dash=3 units. Lower ms = faster blink.
+                </div>
+            </div>
+
             <div class="card wide">
                 <h2>Debug</h2>
                 <pre id="job" class="pre">{}</pre>
