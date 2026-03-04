@@ -28,6 +28,24 @@ async function setLight(node, mode) {
     if (!r.ok || !j.ok) elErr.textContent = j.error || `Light failed (${r.status})`;
 }
 
+async function morseStart() {
+    elErr.textContent = "";
+    const text = document.getElementById("morseText").value;
+    const unitMs = Number(document.getElementById("morseUnit").value || 120);
+
+    const r = await fetch("/api/morse/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, unitMs }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) elErr.textContent = j.error || `Morse start failed (${r.status})`;
+}
+
+async function morseStop() {
+    await fetch("/api/morse/stop", { method: "POST" });
+}
+
 document.getElementById("pause").onclick = () => sendState("pause");
 document.getElementById("resume").onclick = () => sendState("resume");
 document.getElementById("stop").onclick = () => sendState("stop");
@@ -58,6 +76,12 @@ ws.onmessage = (ev) => {
         } else {
             elErr.textContent = `❌ ${s.command} failed: ${s.reason || "unknown"}`;
         }
+    }
+
+    if (msg.type === "morse") {
+        const m = msg.data || {};
+        const el = document.getElementById("morseStatus");
+        if (el) el.textContent = m.running ? `Running (${m.unitMs}ms)` : "Idle";
     }
 
     if (msg.type === "telemetry") {
@@ -122,9 +146,6 @@ ws.onmessage = (ev) => {
         );
     }
 };
-
-ws.onopen = () => setConn(false);
-ws.onclose = () => setConn(false);
 
 ws.onopen = () => setConn(false);
 ws.onclose = () => setConn(false);
