@@ -50,6 +50,8 @@ jobs:
           tar --exclude=".git" \
               --exclude="node_modules" \
               --exclude=".DS_Store" \
+              --exclude="dist" \
+              --exclude="pkgroot" \
               -czf "dist/bambu-panels-${VERSION}.tar.gz" .
 
       - name: Create zip
@@ -57,7 +59,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           mkdir -p dist
           zip -r "dist/bambu-panels-${VERSION}.zip" . \
-            -x ".git/*" "node_modules/*" ".DS_Store"
+            -x ".git/*" "node_modules/*" ".DS_Store" "dist/*" "pkgroot/*"
 
       - name: Create GitHub Release + upload assets
         uses: softprops/action-gh-release@v2
