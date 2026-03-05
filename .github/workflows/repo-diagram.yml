@@ -4,8 +4,6 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
-  schedule:
-    - cron: "0 15 * * 1" # Mondays 15:00 UTC (~7am PT)
 
 permissions:
   contents: write
@@ -17,23 +15,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug - show repo root
+        run: |
+          pwd
+          ls -la
+          ls -la .github || true
+          ls -la .github/scripts || true
+
       - name: Generate tree + mermaid
         run: |
           mkdir -p docs
+
+          sudo apt-get update -y
+          sudo apt-get install -y tree
 
           echo "# Repository Tree" > docs/REPO_TREE.md
           echo "" >> docs/REPO_TREE.md
           echo "Generated: $(date -u +"%Y-%m-%d %H:%M UTC")" >> docs/REPO_TREE.md
           echo "" >> docs/REPO_TREE.md
           echo "\`\`\`" >> docs/REPO_TREE.md
-          # Tree without common junk
-          sudo apt-get update -y
-          sudo apt-get install -y tree
           tree -a -I ".git|node_modules|dist|build|out|.next|.cache|.venv|venv|__pycache__|.DS_Store" >> docs/REPO_TREE.md
           echo "\`\`\`" >> docs/REPO_TREE.md
 
-          # Mermaid diagram: directories as nodes, edges = containment
           python3 .github/scripts/make_repo_mermaid.py
+
+          echo "---- Generated files ----"
+          ls -la docs
+          echo "---- Preview ----"
+          head -n 20 docs/REPO_TREE.md || true
+          head -n 20 docs/repo-diagram.mmd || true
 
       - name: Commit changes (if any)
         run: |
