@@ -15,6 +15,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: DEBUG PROOF OF LIFE
+        run: |
+          echo "I am running steps after checkout."
+          pwd
+          ls -la
+
       - name: Debug - show repo root
         run: |
           pwd
