@@ -49,12 +49,12 @@ jobs:
           ls -la docs
           echo "---- Preview ----"
           head -n 20 docs/REPO_TREE.md || true
-          head -n 20 docs/repo-diagram.mmd || true
+          head -n 20 docs/repo-diagram.md || true
 
       - name: Commit changes (if any)
         run: |
           # Stage generated files (adds new files too)
-          git add docs/REPO_TREE.md docs/repo-diagram.mmd
+          git add docs/REPO_TREE.md docs/repo-diagram.md
 
           # If nothing is staged, stop
           if git diff --cached --quiet; then
