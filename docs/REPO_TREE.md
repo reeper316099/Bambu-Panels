@@ -17,7 +17,7 @@ Generated: 2026-03-05 03:14 UTC
 ├── README.md
 ├── docs
 │   ├── REPO_TREE.md
-│   └── repo-diagram.mmd
+│   └── repo-diagram.md
 ├── go2rtc.yaml
 ├── package-lock.json
 ├── package.json
