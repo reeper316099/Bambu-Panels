@@ -53,12 +53,16 @@ jobs:
 
       - name: Commit changes (if any)
         run: |
-          if git diff --quiet; then
+          # Stage generated files (adds new files too)
+          git add docs/REPO_TREE.md docs/repo-diagram.mmd
+
+          # If nothing is staged, stop
+          if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/REPO_TREE.md docs/repo-diagram.mmd
           git commit -m "chore: auto-update repo diagram"
           git push
